@@ -1,0 +1,589 @@
+MODULE COM
+    PERS bool bActuatorReady;
+    VAR num nTFID_Hi:=0;
+    VAR num nTFID_Lo:=0;
+    PERS num nMsgLength_Hi;
+    PERS num nMsgLength_Lo;
+    CONST num nDeviceAdr:=1;
+    PERS num nFunctionCode;
+    PERS num nRegister_Hi;
+    PERS num nRegister_Lo;
+    PERS num nValue_Hi;
+    PERS num nValue_Lo;
+    PERS num nServerValue_Hi;
+    PERS num nServerValue_Lo;
+    PERS bool bSend:=FALSE;
+    PERS bool bOK:=FALSE;
+    PERS num nErrorCode:=0;
+    VAR string sErrorCode;
+    VAR rawbytes raw_data_in;
+    VAR rawbytes raw_data_out;
+    VAR socketdev tcp_socket;
+    CONST string sRemoteIP:="192.168.1.10";
+    CONST num nRemotePort:=502;
+    CONST string sLocalIP:="127.0.0.1";
+    CONST num nLocalPort:=1025;
+    VAR bool bSetPosition:=FALSE;
+    VAR num nActuatorPosition;
+    VAR num nActuatorPositionMM;
+    VAR num nResponse;
+    PERS string sStatus;
+    VAR num nHeartbeat:=0;
+    VAR num nServerValue_Status;
+    PERS bool bActuatorInit;
+
+
+    VAR num nInput;
+    !VAR bool bOK;
+    VAR num nValHi;
+    VAR num nValLo;
+
+
+    PROC NumberToHiLo(num nInput)
+        !This routine converts num value to 16-bit Hi and Lo -format
+        IF nInput>255 THEN
+            nHi:=Trunc(nInput/256);
+            nLo:=nInput-(nHi*256);
+        ELSE
+            nHi:=0;
+            nLo:=nInput;
+        ENDIF
+
+    ENDPROC
+
+
+
+
+    PROC ConnectToServer()
+        !TODO: error handling
+        SocketClose tcp_socket;
+        SocketCreate tcp_socket;
+        SocketConnect tcp_socket,sRemoteIP,nRemotePort;
+    ENDPROC
+
+    PROC UpdateTFID()
+        nTFID_Lo:=nTFID_Lo+1;
+        IF nTFID_Lo>255 THEN
+            nTFID_Lo:=0;
+            nTFID_Hi:=nTFID_Hi+1;
+            IF nTFID_Hi>255 THEN
+                nTFID_Lo:=0;
+                nTFID_Hi:=0;
+            ENDIF
+        ENDIF
+    ENDPROC
+
+    PROC Heartbeat()
+
+        !MSG length                         = 6
+        !R/W                                = 6 (write)
+        !Register high                      = 32
+        !Register low                       = 1     32 hi + 1 lo = 8193
+        !Number of registers to read high   = 0
+        !Number of registers to read low    = nHeartbeat
+
+        CreateModbusMSG 6,6,32,1,0,nHeartbeat;
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+
+
+        nHeartbeat:=nHeartbeat+1;
+        IF nHeartbeat>255 THEN
+            nHeartbeat:=0;
+        ENDIF
+
+    ENDPROC
+
+    PROC ReadErrorCode()
+        !UINT8
+
+        !MSG length                         = 6
+        !R/W                                = 3 (read)
+        !Register high                      = 33
+        !Register low                       = 4     33 hi + 4 lo = 8452
+        !Number of registers to read high   = 0
+        !Number of registers to read low    = 1
+        CreateModbusMSG 6,3,33,4,0,1;
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+
+        !Receive
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+        UnpackRawBytes raw_data_in,8,nResponse\IntX:=USINT;
+
+
+        !Check for MODBUS-specific errors
+        IF nResponse=3 THEN
+            !Message OK
+
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in)-1,nResponse\IntX:=USINT;
+            nServerValue_Hi:=nResponse;
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            nServerValue_Lo:=nResponse;
+        ELSE
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            sErrorCode:=NumToStr(nResponse,0);
+
+            ErrWrite "Modbus error",sErrorCode\RL2:="Read error code routine";
+            Stop;
+
+        ENDIF
+
+        !********************************TARKISTA**********************************************
+        !Error
+        IF nServerValue_Lo<>0 THEN
+
+            TEST nServerValue_Lo
+            CASE 1:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Need stop command";
+            CASE 2:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Hall error";
+            CASE 3:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Overvoltage";
+            CASE 4:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Undervoltage";
+            CASE 5:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Failed to maintain heartbeat";
+            CASE 7:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Temperature error";
+            CASE 8:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Heartbeat error (internal)";
+            CASE 9:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="SMPS error (internal)";
+            CASE 10:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Current measurement error (internal)";
+            CASE 11:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Parallel arbitration in progress";
+            CASE 254:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Internal fault (not specified)";
+            CASE 255:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="External fault (not specified)";
+            DEFAULT:
+                ErrWrite "Actuator error","Actuator error: "\RL2:="Unknown error";
+            ENDTEST
+
+            Stop;
+
+
+        ENDIF
+    ENDPROC
+
+
+    PROC SetPosition(string sInput)
+
+
+        bActuatorReady:=FALSE;
+
+        !High bit is 251 for everything except position (DEFAULT case)
+        nValHi:=251;
+
+        TEST sInput
+        CASE "Clear error register":
+            nValLo:=0;
+        CASE "Run out":
+            nValLo:=1;
+        CASE "Run in":
+            nValLo:=2;
+        CASE "Stop":
+            nValLo:=3;
+        CASE "Recovery run in":
+            nValLo:=4;
+        CASE "Recovery run out":
+            nValLo:=5;
+        DEFAULT:
+            bOK:=StrToVal(sInput,nInput);
+            IF bOK=TRUE THEN
+                bOK:=FALSE;
+                bSetPosition:=TRUE;
+                IF nInput>=0 AND nInput<=1000 THEN
+                    nPosition:=nInput*10;
+                    NumberToHiLo(nPosition);
+                    nValHi:=nHi;
+                    nValLo:=nLo;
+                ELSE
+                    ErrWrite "Invalid value","Invalid value: "\RL2:="Position";
+                    Stop;
+                ENDIF
+            ELSE
+                ErrWrite "Invalid value","Invalid value: "\RL2:="SetPosition routine input";
+                Stop;
+            ENDIF
+        ENDTEST
+
+        !MSG length                         = 6
+        !R/W                                = 6 (write)
+        !Register high                      = 32
+        !Register low                       = 2         32 hi + 2 lo = 8194
+        !Number of registers to write high  = nValHi
+        !Number of registers to write low   = nValLo
+
+        CreateModbusMSG 6,6,32,2,nValHi,nValLo;
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+        !Receive
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+        UnpackRawBytes raw_data_in,8,nResponse\IntX:=USINT;
+
+
+        !Check for MODBUS-specific errors
+        IF nResponse=6 THEN
+            !Message OK
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in)-1,nResponse\IntX:=USINT;
+            nServerValue_Hi:=nResponse;
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            nServerValue_Lo:=nResponse;
+
+        ELSE
+            !Error
+
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            sErrorCode:=NumToStr(nResponse,0);
+            ErrWrite "Modbus error",sErrorCode\RL2:="SetPosition routine";
+            Stop;
+        ENDIF
+
+
+        !Wait for stop
+
+        IF sInput="Run out" OR sInput="Recovery run out" THEN
+            sStatus:="";
+            WHILE sStatus<>"Endstop reached out" DO
+                Heartbeat;
+                ReadStatus;
+                Waittime 0.2;
+            ENDWHILE
+
+        ELSEIF sInput="Run in" OR sInput="Recovery run in" THEN
+            sStatus:="";
+            WHILE sStatus<>"Endstop reached in" DO
+                Heartbeat;
+                ReadStatus;
+                Waittime 0.2;
+            ENDWHILE
+        ELSEIF sInput="Stop" OR sInput="Clear error register" THEN
+            !TODO check
+
+        ELSEIF bSetPosition=TRUE THEN
+            bSetPosition:=FALSE;
+            nActuatorPositionMM:=-999;
+            WHILE abs(nInput-nActuatorpositionMM)>1 DO
+                Heartbeat;
+                ReadPosition;
+                Waittime 0.2;
+            ENDWHILE
+
+        ELSE
+            ErrWrite "Invalid value: sInput",sInput,\RL2:="SetPosition routine";
+            Stop;
+
+        ENDIF
+
+
+
+        bActuatorReady:=TRUE;
+
+    ENDPROC
+
+    PROC ReadPosition()
+
+        !MSG length                         = 6
+        !R/W                                = 3 (read)
+        !Register high                      = 33
+        !Register low                       = 1     33 hi + 1 lo = 8449
+        !Number of registers to read high   = 0
+        !Number of registers to read low    = 1
+
+        CreateModbusMSG 6,3,33,1,0,1;
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+
+        !Receive
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+        UnpackRawBytes raw_data_in,8,nResponse\IntX:=USINT;
+
+        !Check for MODBUS-specific errors
+        IF nResponse=3 THEN
+            !Message OK
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in)-1,nResponse\IntX:=USINT;
+            nServerValue_Hi:=nResponse;
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            nServerValue_Lo:=nResponse;
+
+        ELSE
+            !Error
+
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            sErrorCode:=NumToStr(nResponse,0);
+            ErrWrite "Modbus error",sErrorCode\RL2:="Read position routine";
+            Stop;
+        ENDIF
+
+        nActuatorposition:=nServerValue_Hi*256+nServerValue_Lo;
+
+        !Position lost
+        IF nActuatorposition=64024 THEN
+            ErrWrite "Actuator error","Actuator error: "\RL2:="Position lost";
+            Stop;
+        ELSE
+            !Convert position to millimeters
+            nActuatorpositionMM:=nActuatorposition/10;
+        ENDIF
+
+    ENDPROC
+
+
+
+
+
+
+    PROC SetCommandValue(string sCommand,num nInput)
+
+        VAR num nRegLo;
+        CONST num nValHi:=0;
+        VAR num nValLo;
+
+        bActuatorReady:=FALSE;
+        TEST sCommand
+        CASE "Current":
+            nRegLo:=3;
+            IF nInput=251 THEN
+                !Default current
+                nValLo:=251;
+            ELSEIF nInput>=0 AND nInput<=62.5 THEN
+                !0 - 62.5 A
+                nValLo:=Round(nInput*4);
+                !0.25A/bit
+            ELSE
+                ErrWrite "Invalid value","Invalid value: "\RL2:="Current";
+                Stop;
+            ENDIF
+
+        CASE "Speed":
+            nRegLo:=4;
+            IF nInput=251 THEN
+                !Default speed
+                nValLo:=251;
+            ELSEIF nInput>=201 AND nInput<=250 THEN
+                !Max Speed
+                nValLo:=250;
+            ELSEIF nInput>=0 AND nInput<=100 THEN
+                !0 - 100 %
+                nValLo:=nInput*2;
+                !0.5%/bit
+            ELSE
+                ErrWrite "Invalid value","Invalid value: "\RL2:="Speed";
+                Stop;
+            ENDIF
+
+        CASE "Soft start":
+            nRegLo:=5;
+
+            IF nInput=251 THEN
+                nValLo:=251;
+            ELSEIF nInput>=0 AND nInput<=12.5 THEN
+                nValLo:=Round(nInput*20);
+                !0.05s/bit
+            ELSE
+                ErrWrite "Invalid value","Invalid value: "\RL2:="Soft Start Ramping time";
+                Stop;
+            ENDIF
+
+        CASE "Soft stop":
+            nRegLo:=6;
+            IF nInput=251 THEN
+                nValLo:=251;
+            ELSEIF nInput>=0 AND nInput<=12.5 THEN
+                nValLo:=Round(nInput*20);
+                !0.05s/bit
+            ELSE
+                ErrWrite "Invalid value","Invalid value: "\RL2:="Soft Stop Ramping time";
+                Stop;
+            ENDIF
+        DEFAULT:
+            ErrWrite "Invalid value","Invalid value: "\RL2:="SetCommandValue routine input";
+            Stop;
+        ENDTEST
+
+
+        !MSG length                         = 6
+        !R/W                                = 6 (write)
+        !Register high                      = 32
+        !Register low                       = nRegLo
+        !Number of registers to write high  = nValHi
+        !Number of registers to write low   = nValLo
+
+        CreateModbusMSG 6,6,32,nRegLo,nValHi,nValLo;
+
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+        !Receive
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+        UnpackRawBytes raw_data_in,8,nResponse\IntX:=USINT;
+
+
+        !Check for MODBUS-specific errors
+        IF nResponse=6 THEN
+            !Message OK
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in)-1,nResponse\IntX:=USINT;
+            nServerValue_Hi:=nResponse;
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            nServerValue_Lo:=nResponse;
+
+        ELSE
+            !Error
+
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            sErrorCode:=NumToStr(nResponse,0);
+            ErrWrite "Modbus error",sErrorCode\RL2:="SetCommandValue routine";
+            Stop;
+        ENDIF
+        bActuatorReady:=TRUE;
+    ENDPROC
+
+
+    PROC ReadStatus()
+        !UINT8
+
+        !MSG length                         = 6
+        !R/W                                = 3 (read)
+        !Register high                      = 33
+        !Register low                       = 3     33 hi + 3 lo = 8451
+        !Number of registers to read high   = 0
+        !Number of registers to read low    = 1
+
+
+        CreateModbusMSG 6,3,33,3,0,1;
+
+
+        SocketSend tcp_socket\RawData:=raw_data_out;
+
+
+        !Receive
+        ClearRawBytes raw_data_in;
+        SocketReceive tcp_socket\RawData:=raw_data_in;
+        UnpackRawBytes raw_data_in,8,nResponse\IntX:=USINT;
+
+        !Check for MODBUS-specific errors
+        IF nResponse=3 THEN
+            !Message OK
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+            nServerValue_Status:=nResponse;
+
+        ELSE
+            !Error
+
+            UnpackRawBytes raw_data_in,RawBytesLen(raw_data_in),nResponse\IntX:=USINT;
+
+            sErrorCode:=NumToStr(nResponse,0);
+            ErrWrite "Modbus error",sErrorCode\RL2:="Read status routine";
+            Stop;
+        ENDIF
+
+        !************************TARKISTA***************************************
+        !b6 = 1 and b7 = 1 (reserved bits)
+        TEST (nServerValue_Status-192)
+
+        CASE 1:
+            sStatus:="Endstop reached in";
+            !nServerValue = 193
+        CASE 2:
+            sStatus:="Endstop reached out";
+            !nServerValue = 194
+        CASE 4:
+            sStatus:="Overcurrent";
+            !nServerValue = 196
+        CASE 8:
+            sStatus:="Running out";
+            !nServerValue = 200
+        CASE 16:
+            sStatus:="Running in";
+            !nServerValue = 208
+        CASE 32:
+            sStatus:="Heartbeat needed";
+            !nServerValue = 224
+        DEFAULT:
+            sStatus:="Unknown";
+        ENDTEST
+    ENDPROC
+
+
+
+    PROC CreateModbusMSG(num nLength,num nRW,num nRegHi,num nRegLo,num nRegValueHi,num nRegValueLo)
+
+        ClearRawBytes raw_data_out;
+        !Transaction ID Hi
+        PackRawBytes nTFID_Hi,raw_data_out,1\IntX:=USINT;
+        !Transaction ID Lo
+        PackRawBytes nTFID_Lo,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Protocol ID Hi
+        PackRawBytes 0,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Protocol ID Lo
+        PackRawBytes 0,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Message length Hi
+        PackRawBytes 0,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Message length Lo
+        PackRawBytes nLength,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Device address
+        PackRawBytes nDeviceAdr,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Functional code (3 = read, 6 = write)
+        PackRawBytes nRW,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Register/index Hi
+        PackRawBytes nRegHi,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Register/index Lo
+        PackRawBytes nRegLo,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Value (write) / Number of registers (read) Hi
+        PackRawBytes nRegValueHi,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+        !Value (write) / Number of registers (read) Lo
+        PackRawBytes nRegValueLo,raw_data_out,(RawBytesLen(raw_data_out)+1)\IntX:=USINT;
+
+        UpdateTFID;
+
+
+    ENDPROC
+
+
+
+    PROC InitActuator()
+        bActuatorInit:=FALSE;
+        nServerValue_Lo:=0;
+        nServerValue_Hi:=0;
+        nErrorCode:=0;
+
+        Heartbeat;
+        SetPosition "Clear error register";
+        Heartbeat;
+        SetCommandValue "Current",251;
+        Heartbeat;
+        SetCommandValue "Speed",50;
+        Heartbeat;
+        SetCommandValue "Soft start",251;
+        Heartbeat;
+        SetCommandValue "Soft stop",251;
+        Heartbeat;
+        SetPosition "Stop";
+        Heartbeat;
+        ReadErrorCode;
+
+        bActuatorInit:=TRUE;
+
+    ENDPROC
+
+
+
+ENDMODULE

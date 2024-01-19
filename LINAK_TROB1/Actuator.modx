@@ -1,0 +1,44 @@
+MODULE Actuator
+    PERS bool bSend;
+    PERS bool bActuatorReady;
+    PERS bool bActuatorInit;
+    PERS string sCommandToBG;
+    PERS string sValueToBG;
+    PERS num nValueToBG;
+
+    PROC RunActuator(string sPosition)
+        !Commands (string): "Clear error register", "Run out", "Run in", "Stop", "Recovery run in", 
+        !"Recovery run out", position in mm for example: "500"
+
+        sCommandToBG:="Position";
+        sValueToBG:=sPosition;
+        bActuatorReady := FALSE;
+        bSend:=TRUE;
+        WaitUntil bActuatorReady=TRUE;
+    ENDPROC
+
+    PROC SetupActuator(string sCommand,num nValue)
+        !Commands
+        !"Current", 0 - 62.5 (A), 251 = Default value
+        !"Speed", 0 - 100 (%), 251 = Default value, 201-250 = Max speed
+        !"Soft Start", 0 - 12.5 (s), 251 = Default value 
+        !"Soft Stop", 0 - 12.5 (s), 251 = Default value 
+      
+        !Check LINAK Modbus TCP/IP User Manual for commands and values
+
+        sCommandToBG:=sCommand;
+        nValueToBG:=nValue;
+        bActuatorReady := FALSE;
+        bSend:=TRUE;
+        WaitUntil bActuatorReady=TRUE;
+    ENDPROC
+
+
+
+    PROC InitActuator()
+        Waittime 2;
+        WaitUntil bActuatorInit=TRUE;
+
+    ENDPROC
+
+ENDMODULE

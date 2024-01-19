@@ -1,0 +1,36 @@
+MODULE MainModule
+
+    PROC main()
+        InitActuator;
+        TestRoutine;
+    ENDPROC
+
+    PROC TestRoutine()
+
+        RunActuator "Stop";
+        RunActuator "Run out";
+
+        RunActuator "Stop";
+        RunActuator "Run in";
+
+        SetupActuator "Speed",10;
+
+        RunActuator "Stop";
+        RunActuator "200";
+
+        RunActuator "Stop";
+        RunActuator "100";
+
+        SetupActuator "Speed",50;
+
+        RunActuator "Stop";
+        RunActuator "Run in";
+    ENDPROC
+
+
+
+
+
+
+
+ENDMODULE

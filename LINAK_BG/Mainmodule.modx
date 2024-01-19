@@ -1,0 +1,46 @@
+MODULE Mainmodule
+PERS string sCommandToBG;
+PERS string sValueToBG;
+PERS num nValueToBG;
+
+
+    PROC main()
+        Init;
+        ConnectToServer;
+        InitActuator;
+       
+        
+        WHILE TRUE DO
+            IF bSend=FALSE THEN
+                Heartbeat;
+                waittime 0.5;
+
+            ELSE
+                IF sCommandToBG = "Position" THEN
+                    SetPosition sValueToBG;
+                ELSE 
+                    !Set current, speed or ramp time
+                    SetCommandValue sCommandToBG,nValueToBG;
+                
+                ENDIF
+                bSend:=FALSE;
+            ENDIF
+           
+
+        ENDWHILE
+
+
+    ENDPROC
+
+
+    
+    
+    PROC Init()
+        nServerValue_Lo:=0;
+        nServerValue_Hi:=0;
+        nServerValue_Status:=0;
+        bSend:=FALSE;
+        bOK:=FALSE;
+        nErrorCode:=0;
+    ENDPROC
+ENDMODULE
