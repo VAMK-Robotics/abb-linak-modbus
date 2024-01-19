@@ -14,6 +14,7 @@ Program for ABB robots to control LINAK ELEVATE lifting column using Modbus TCP/
 
 - Load program modules from **LINAK_BG** to a background task
 - Load program modules from **LINAK_TROB1** to the TROB1 -task
+- Set the IP of the actuator to the variable **sRemoteIP** in the **COM** -module of the background task
 
 ## Examples
 - **TestRoutine** in the **Actuator** -module contains examples on how to control the actuator
